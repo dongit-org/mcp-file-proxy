@@ -81,7 +81,7 @@ describe("registerToolSchema", () => {
 });
 
 describe("interceptFileArguments", () => {
-  it("replaces file paths with base64-encoded content", () => {
+  it("replaces file paths with base64-encoded content", async () => {
     const filePath = join(TEST_DIR, "test.txt");
     writeFileSync(filePath, "hello world");
 
@@ -94,13 +94,13 @@ describe("interceptFileArguments", () => {
       },
     });
 
-    const result = interceptFileArguments("upload", { file: filePath });
+    const result = await interceptFileArguments("upload", { file: filePath });
     const decoded = Buffer.from(result.file as string, "base64").toString();
 
     expect(decoded).toBe("hello world");
   });
 
-  it("passes through base64-encoded values unchanged", () => {
+  it("passes through base64-encoded values unchanged", async () => {
     const base64 = Buffer.from("hello world").toString("base64");
 
     registerToolSchema({
@@ -113,7 +113,7 @@ describe("interceptFileArguments", () => {
       },
     });
 
-    const result = interceptFileArguments("upload", {
+    const result = await interceptFileArguments("upload", {
       file: base64,
       name: "my-doc",
     });
@@ -122,7 +122,7 @@ describe("interceptFileArguments", () => {
     expect(result.name).toBe("my-doc");
   });
 
-  it("throws for invalid file paths", () => {
+  it("throws for invalid file paths", async () => {
     registerToolSchema({
       name: "upload",
       inputSchema: {
@@ -132,19 +132,19 @@ describe("interceptFileArguments", () => {
       },
     });
 
-    expect(() =>
+    await expect(
       interceptFileArguments("upload", { file: "/nonexistent/path.txt" }),
-    ).toThrow("is not a valid file path or base64-encoded string");
+    ).rejects.toThrow("is not a valid file path or base64-encoded string");
   });
 
-  it("passes through when tool has no cached file params", () => {
+  it("passes through when tool has no cached file params", async () => {
     const args = { foo: "bar" };
-    const result = interceptFileArguments("unknown-tool", args);
+    const result = await interceptFileArguments("unknown-tool", args);
 
     expect(result).toEqual(args);
   });
 
-  it("passes through non-string values", () => {
+  it("passes through non-string values", async () => {
     registerToolSchema({
       name: "upload",
       inputSchema: {
@@ -154,11 +154,11 @@ describe("interceptFileArguments", () => {
       },
     });
 
-    const result = interceptFileArguments("upload", { file: 12345 });
+    const result = await interceptFileArguments("upload", { file: 12345 });
     expect(result.file).toBe(12345);
   });
 
-  it("passes through empty strings", () => {
+  it("passes through empty strings", async () => {
     registerToolSchema({
       name: "upload",
       inputSchema: {
@@ -168,11 +168,11 @@ describe("interceptFileArguments", () => {
       },
     });
 
-    const result = interceptFileArguments("upload", { file: "" });
+    const result = await interceptFileArguments("upload", { file: "" });
     expect(result.file).toBe("");
   });
 
-  it("handles binary files", () => {
+  it("handles binary files", async () => {
     const filePath = join(TEST_DIR, "binary.bin");
     const buffer = Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x89, 0x50]);
     writeFileSync(filePath, buffer);
@@ -186,13 +186,13 @@ describe("interceptFileArguments", () => {
       },
     });
 
-    const result = interceptFileArguments("upload", { file: filePath });
+    const result = await interceptFileArguments("upload", { file: filePath });
     const decoded = Buffer.from(result.file as string, "base64");
 
     expect(decoded).toEqual(buffer);
   });
 
-  it("does not mutate the original args object", () => {
+  it("does not mutate the original args object", async () => {
     const filePath = join(TEST_DIR, "test.txt");
     writeFileSync(filePath, "content");
 
@@ -206,7 +206,7 @@ describe("interceptFileArguments", () => {
     });
 
     const original = { file: filePath };
-    interceptFileArguments("upload", original);
+    await interceptFileArguments("upload", original);
 
     expect(original.file).toBe(filePath);
   });

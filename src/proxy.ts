@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
@@ -10,9 +11,40 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { registerToolSchema, interceptFileArguments } from "./file-interceptor.js";
-import type { PackageInfo } from "./remote-client.js";
+import type { ProxyConfig } from "./config.js";
 
-export function createProxyServer(remoteClient: Client, pkg: PackageInfo): Server {
+export interface PackageInfo {
+  name: string;
+  version: string;
+}
+
+export interface ProxyServer {
+  server: Server;
+  remoteClient: Client;
+}
+
+/**
+ * Connects to the remote MCP server and creates a local proxy server that
+ * forwards all requests to it. Tool calls are intercepted via
+ * {@link interceptFileArguments} to map local file paths
+ * into base64-encoded content before forwarding.
+ * @param config - Proxy configuration containing the remote URL and headers.
+ * @param pkg - Package metadata used to identify this proxy.
+ * @returns The local MCP {@link Server} and the connected remote {@link Client}.
+ */
+export async function createProxyServer(config: ProxyConfig, pkg: PackageInfo): Promise<ProxyServer> {
+  const remoteClient = new Client(
+    { name: pkg.name, version: pkg.version },
+    { capabilities: {} },
+  );
+
+  const url = new URL(config.url);
+  const transport = new StreamableHTTPClientTransport(url, {
+    requestInit: { headers: config.headers },
+  });
+
+  await remoteClient.connect(transport);
+
   const server = new Server(
     { name: pkg.name, version: pkg.version },
     {
@@ -38,7 +70,7 @@ export function createProxyServer(remoteClient: Client, pkg: PackageInfo): Serve
     const { name, arguments: args } = request.params;
 
     const interceptedArgs = args
-      ? interceptFileArguments(name, args)
+      ? await interceptFileArguments(name, args)
       : args;
 
     return await remoteClient.callTool({
@@ -67,5 +99,5 @@ export function createProxyServer(remoteClient: Client, pkg: PackageInfo): Serve
     return await remoteClient.getPrompt(request.params);
   });
 
-  return server;
+  return { server, remoteClient };
 }

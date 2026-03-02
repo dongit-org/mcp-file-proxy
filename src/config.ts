@@ -4,6 +4,14 @@ export interface ProxyConfig {
   acceptInsecureCerts: boolean;
 }
 
+/**
+ * Loads the proxy configuration from environment variables and CLI arguments.
+ *
+ * @param env - Environment variables to read from. Defaults to `process.env`.
+ * @param argv - CLI argument list. Defaults to `process.argv`.
+ * @returns The parsed {@link ProxyConfig}.
+ * @throws If `MCP_URL` is missing or invalid, or if `MCP_HEADERS` is malformed.
+ */
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
   argv: string[] = process.argv,
