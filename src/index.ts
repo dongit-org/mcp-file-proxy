@@ -3,12 +3,16 @@
 import { createRequire } from "node:module";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config.js";
-import { createRemoteClient } from "./remote-client.js";
 import { createProxyServer } from "./proxy.js";
 
 const require = createRequire(import.meta.url);
 const { name, version } = require("../package.json") as { name: string; version: string };
 
+/**
+ * Entry point. Loads configuration, connects to the remote MCP server,
+ * starts the local stdio proxy server, and registers signal handlers for
+ * graceful shutdown.
+ */
 async function main(): Promise<void> {
   const config = loadConfig();
 
@@ -17,8 +21,7 @@ async function main(): Promise<void> {
     console.warn("TLS certificate verification disabled (--accept-insecure-certs)");
   }
 
-  const remoteClient = await createRemoteClient(config, { name, version });
-  const server = createProxyServer(remoteClient, { name, version });
+  const { server, remoteClient } = await createProxyServer(config, { name, version });
   const transport = new StdioServerTransport();
 
   await server.connect(transport);

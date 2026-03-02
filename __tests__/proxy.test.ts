@@ -1,60 +1,72 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createProxyServer } from "../src/proxy.js";
 import { clearSchemaCache } from "../src/file-interceptor.js";
 
-function createMockClient() {
-  return {
-    listTools: vi.fn().mockResolvedValue({
-      tools: [
-        {
-          name: "test-tool",
-          description: "A test tool",
-          inputSchema: {
-            type: "object",
-            properties: {
-              file: { type: "string", format: "binary", description: "The raw document data" },
-              name: { type: "string", description: "A name" },
-            },
+const mockConnect = vi.fn().mockResolvedValue(undefined);
+const mockClient = {
+  connect: mockConnect,
+  listTools: vi.fn().mockResolvedValue({
+    tools: [
+      {
+        name: "test-tool",
+        description: "A test tool",
+        inputSchema: {
+          type: "object",
+          properties: {
+            file: { type: "string", format: "binary", description: "The raw document data" },
+            name: { type: "string", description: "A name" },
           },
         },
-      ],
-    }),
-    callTool: vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: "result" }],
-    }),
-    listResources: vi.fn().mockResolvedValue({
-      resources: [{ uri: "res://test", name: "Test Resource" }],
-    }),
-    listResourceTemplates: vi.fn().mockResolvedValue({
-      resourceTemplates: [],
-    }),
-    readResource: vi.fn().mockResolvedValue({
-      contents: [{ uri: "res://test", text: "content" }],
-    }),
-    listPrompts: vi.fn().mockResolvedValue({
-      prompts: [{ name: "test-prompt", description: "A test prompt" }],
-    }),
-    getPrompt: vi.fn().mockResolvedValue({
-      messages: [{ role: "user", content: { type: "text", text: "hello" } }],
-    }),
-  };
-}
+      },
+    ],
+  }),
+  callTool: vi.fn().mockResolvedValue({
+    content: [{ type: "text", text: "result" }],
+  }),
+  listResources: vi.fn().mockResolvedValue({
+    resources: [{ uri: "res://test", name: "Test Resource" }],
+  }),
+  listResourceTemplates: vi.fn().mockResolvedValue({
+    resourceTemplates: [],
+  }),
+  readResource: vi.fn().mockResolvedValue({
+    contents: [{ uri: "res://test", text: "content" }],
+  }),
+  listPrompts: vi.fn().mockResolvedValue({
+    prompts: [{ name: "test-prompt", description: "A test prompt" }],
+  }),
+  getPrompt: vi.fn().mockResolvedValue({
+    messages: [{ role: "user", content: { type: "text", text: "hello" } }],
+  }),
+};
 
-type MockClient = ReturnType<typeof createMockClient>;
+vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
+  Client: vi.fn().mockImplementation(() => mockClient),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+  StreamableHTTPClientTransport: vi.fn(),
+}));
+
+import { createProxyServer } from "../src/proxy.js";
+import type { ProxyConfig } from "../src/config.js";
+
+const testConfig: ProxyConfig = {
+  url: "https://example.com/mcp",
+  headers: {},
+  acceptInsecureCerts: false,
+};
+
+const testPkg = { name: "test", version: "0.0.0" };
 
 /**
  * Invokes a request handler on the server by simulating the JSON-RPC flow.
- * We access the internal handler map via the protected setRequestHandler
- * registration that was done during createProxyServer.
  */
 async function invokeHandler(
-  server: ReturnType<typeof createProxyServer>,
+  server: unknown,
   method: string,
   params: Record<string, unknown> = {},
 ): Promise<unknown> {
-  // The Server class stores handlers internally. We can trigger them
-  // by accessing _requestHandlers which is set by setRequestHandler.
-  const handlers = (server as unknown as { _requestHandlers: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
+  const handlers = (server as { _requestHandlers: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
   const handler = handlers.get(method);
 
   if (!handler) {
@@ -65,21 +77,22 @@ async function invokeHandler(
 }
 
 describe("createProxyServer", () => {
-  let mockClient: MockClient;
-
   beforeEach(() => {
     clearSchemaCache();
-    mockClient = createMockClient();
+    vi.clearAllMocks();
+    mockConnect.mockResolvedValue(undefined);
   });
 
-  it("creates a server instance", () => {
-    const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+  it("creates a server instance and connects to the remote", async () => {
+    const { server, remoteClient } = await createProxyServer(testConfig, testPkg);
     expect(server).toBeDefined();
+    expect(remoteClient).toBeDefined();
+    expect(mockConnect).toHaveBeenCalled();
   });
 
   describe("tools/list forwarding", () => {
     it("forwards listTools to remote client", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
       const result = await invokeHandler(server, "tools/list");
 
       expect(mockClient.listTools).toHaveBeenCalled();
@@ -93,7 +106,7 @@ describe("createProxyServer", () => {
 
   describe("tools/call forwarding", () => {
     it("forwards callTool to remote client", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
 
       // First list tools to register schemas
       await invokeHandler(server, "tools/list");
@@ -113,7 +126,7 @@ describe("createProxyServer", () => {
     });
 
     it("passes through undefined arguments", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
 
       await invokeHandler(server, "tools/call", {
         name: "test-tool",
@@ -128,7 +141,7 @@ describe("createProxyServer", () => {
 
   describe("resources/list forwarding", () => {
     it("forwards listResources to remote client", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
       const result = await invokeHandler(server, "resources/list");
 
       expect(mockClient.listResources).toHaveBeenCalled();
@@ -140,7 +153,7 @@ describe("createProxyServer", () => {
 
   describe("resources/templates/list forwarding", () => {
     it("forwards listResourceTemplates to remote client", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
       const result = await invokeHandler(server, "resources/templates/list");
 
       expect(mockClient.listResourceTemplates).toHaveBeenCalled();
@@ -150,7 +163,7 @@ describe("createProxyServer", () => {
 
   describe("resources/read forwarding", () => {
     it("forwards readResource to remote client", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
       const result = await invokeHandler(server, "resources/read", {
         uri: "res://test",
       });
@@ -164,7 +177,7 @@ describe("createProxyServer", () => {
 
   describe("prompts/list forwarding", () => {
     it("forwards listPrompts to remote client", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
       const result = await invokeHandler(server, "prompts/list");
 
       expect(mockClient.listPrompts).toHaveBeenCalled();
@@ -176,7 +189,7 @@ describe("createProxyServer", () => {
 
   describe("prompts/get forwarding", () => {
     it("forwards getPrompt to remote client", async () => {
-      const server = createProxyServer(mockClient as never, { name: "test", version: "0.0.0" });
+      const { server } = await createProxyServer(testConfig, testPkg);
       const result = await invokeHandler(server, "prompts/get", {
         name: "test-prompt",
       });

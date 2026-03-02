@@ -1,4 +1,7 @@
-import { readFileSync, statSync } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { text } from "node:stream/consumers";
+import { Base64Encode } from "base64-stream";
 
 interface ToolSchema {
   name: string;
@@ -9,6 +12,12 @@ interface ToolSchema {
 
 const fileParamCache = new Map<string, Set<string>>();
 
+/**
+ * Registers a tool's schema and caches the names of any parameters with
+ * `format: "binary"`. The description of those parameters is also prefixed with a
+ * "Provide a file path." string.
+ * @param tool - The tool schema to inspect and register.
+ */
 export function registerToolSchema(tool: ToolSchema): void {
   const fileParams = new Set<string>();
   const properties = tool.inputSchema?.properties;
@@ -41,10 +50,34 @@ function isBase64(value: string): boolean {
   return /^[A-Za-z0-9+/\n\r]+=*$/.test(value);
 }
 
-export function interceptFileArguments(
+/**
+ * Streams a file and returns its contents as a base64-encoded string.
+ * Reads in chunks to avoid holding the entire raw buffer in memory.
+ * @param filePath - Path to the file to read.
+ * @returns The base64-encoded file contents.
+ */
+async function streamFileAsBase64(filePath: string): Promise<string> {
+  const encoder = new Base64Encode();
+  const [result] = await Promise.all([
+    text(encoder),
+    pipeline(createReadStream(filePath), encoder),
+  ]);
+  return result;
+}
+
+/**
+ * Intercepts a tool call's arguments, replacing file-path strings with their
+ * base64-encoded file contents for any parameters previously identified as
+ * binary. Values that are already valid base64 are passed through unchanged.
+ * @param toolName - The name of the tool being called.
+ * @param args - The original argument map from the tool call.
+ * @returns A new argument map with file paths resolved to base64 content.
+ * @throws If a binary parameter's value is neither a valid file path nor valid base64.
+ */
+export async function interceptFileArguments(
   toolName: string,
   args: Record<string, unknown>,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const fileParams = fileParamCache.get(toolName);
 
   if (!fileParams) {
@@ -61,8 +94,7 @@ export function interceptFileArguments(
     }
 
     if (statSync(value, { throwIfNoEntry: false })?.isFile()) {
-      const fileBuffer = readFileSync(value);
-      result[paramName] = fileBuffer.toString("base64");
+      result[paramName] = await streamFileAsBase64(value);
     } else if (!isBase64(value)) {
       throw new Error(`Tool "${toolName}", param "${paramName}": "${value}" is not a valid file path or base64-encoded string`);
     }
