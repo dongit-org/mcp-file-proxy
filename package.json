@@ -1,0 +1,28 @@
+{
+  "name": "mcp-file-proxy",
+  "version": "1.0.0",
+  "description": "A stdio-to-HTTP MCP proxy that transparently intercepts file parameters, reading local files and base64-encoding them before forwarding to the remote server.",
+  "type": "module",
+  "bin": {
+    "mcp-file-proxy": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
