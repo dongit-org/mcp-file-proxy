@@ -17,6 +17,9 @@ export function registerToolSchema(tool: ToolSchema): void {
     for (const [paramName, paramSchema] of Object.entries(properties)) {
       if (paramSchema.format === "binary") {
         fileParams.add(paramName);
+        paramSchema.description = paramSchema.description
+          ? `Provide a file path. ${paramSchema.description}`
+          : "Provide a file path.";
       }
     }
   }
