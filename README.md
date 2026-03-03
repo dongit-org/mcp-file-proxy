@@ -43,7 +43,7 @@ Add to your MCP client config:
   "mcpServers": {
     "my-server": {
       "command": "npx",
-      "args": ["mcp-file-proxy"],
+      "args": ["@dongit/mcp-file-proxy"],
       "env": {
         "MCP_URL": "https://example.com/mcp",
         "MCP_HEADERS": "{\"Authorization\": \"Bearer your-token\"}"
