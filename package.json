@@ -1,6 +1,6 @@
 {
   "name": "@dongit/mcp-file-proxy",
-  "version": "1.0.1",
+  "version": "0.0.0",
   "description": "A stdio-to-HTTP MCP proxy that transparently intercepts file parameters, reading local files and base64-encoding them before forwarding to the remote server.",
   "type": "module",
   "bin": {
