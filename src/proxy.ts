@@ -23,6 +23,35 @@ export interface ProxyServer {
   remoteClient: Client;
 }
 
+const TLS_ERROR_CODES = new Set([
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "CERT_HAS_EXPIRED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "CERT_NOT_YET_VALID",
+]);
+
+function getRootCause(error: unknown): Error | undefined {
+  let current = error;
+  while (current instanceof Error && current.cause instanceof Error) {
+    current = current.cause;
+  }
+  return current instanceof Error ? current : undefined;
+}
+
+function formatConnectionError(error: unknown, url: string): string {
+  const root = getRootCause(error);
+  const code = root && "code" in root ? (root as { code: string }).code : undefined;
+
+  if (code && TLS_ERROR_CODES.has(code)) {
+    return `TLS certificate error connecting to ${url}: ${root!.message} (${code}). Use --accept-insecure-certs to bypass certificate verification.`;
+  }
+
+  const detail = root?.message || (error instanceof Error ? error.message : String(error));
+  return `Failed to connect to ${url}: ${detail}`;
+}
+
 /**
  * Connects to the remote MCP server and creates a local proxy server that
  * forwards all requests to it. Tool calls are intercepted via
@@ -43,7 +72,12 @@ export async function createProxyServer(config: ProxyConfig, pkg: PackageInfo): 
     requestInit: { headers: config.headers },
   });
 
-  await remoteClient.connect(transport);
+  try {
+    await remoteClient.connect(transport);
+  } catch (error: unknown) {
+    const message = formatConnectionError(error, config.url);
+    throw new Error(message, { cause: error });
+  }
 
   const server = new Server(
     { name: pkg.name, version: pkg.version },
