@@ -90,6 +90,27 @@ describe("createProxyServer", () => {
     expect(mockConnect).toHaveBeenCalled();
   });
 
+  it("throws a descriptive error for TLS certificate failures", async () => {
+    const tlsError = new TypeError("fetch failed", {
+      cause: new Error("self-signed certificate", {
+        cause: Object.assign(new Error("self signed certificate"), { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }),
+      }),
+    });
+    mockConnect.mockRejectedValueOnce(tlsError);
+
+    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
+      /TLS certificate error.*DEPTH_ZERO_SELF_SIGNED_CERT.*--accept-insecure-certs/,
+    );
+  });
+
+  it("throws a descriptive error for generic connection failures", async () => {
+    mockConnect.mockRejectedValueOnce(new Error("Connection refused"));
+
+    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
+      /Failed to connect to.*Connection refused/,
+    );
+  });
+
   describe("tools/list forwarding", () => {
     it("forwards listTools to remote client", async () => {
       const { server } = await createProxyServer(testConfig, testPkg);

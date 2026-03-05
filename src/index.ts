@@ -18,7 +18,6 @@ async function main(): Promise<void> {
 
   if (config.acceptInsecureCerts) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-    console.warn("TLS certificate verification disabled (--accept-insecure-certs)");
   }
 
   const { server, remoteClient } = await createProxyServer(config, { name, version });
