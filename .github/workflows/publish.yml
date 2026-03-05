@@ -22,5 +22,5 @@ jobs:
       - run: npm audit
       - run: npm test
       - run: npm run build
-      - run: npm version "${GITHUB_REF#refs/tags/v}" --no-git-tag-back
+      - run: npm version "${GITHUB_REF#refs/tags/v}" --no-git-tag-version
       - run: npm publish
