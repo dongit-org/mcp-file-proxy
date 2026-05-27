@@ -26,6 +26,10 @@ To mark a parameter as binary on your server, set `format` to `"binary"` in the 
         "type": "string",
         "format": "binary",
         "description": "The document to upload"
+      },
+      "file_name": {
+        "type": "string",
+        "description": "document filename"
       }
     }
   }
@@ -33,6 +37,10 @@ To mark a parameter as binary on your server, set `format` to `"binary"` in the 
 ```
 
 The proxy will prepend "Provide a file path." to the description of binary parameters so the client knows to supply a path.
+
+If an optional `<param>_name` string parameter is declared alongside a binary param (e.g. `file_name` next to `file`), the
+proxy hides it from the client and auto-fills it with the file's basename on each call, so the server can store the
+original filename.
 
 ## Configuration
 
