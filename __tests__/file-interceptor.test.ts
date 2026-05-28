@@ -78,6 +78,24 @@ describe("registerToolSchema", () => {
 
     expect(getCachedFileParams("empty-props")).toBeUndefined();
   });
+
+  it("strips file_name siblings from the schema and required array", () => {
+    const schema = {
+      name: "upload-doc",
+      inputSchema: {
+        properties: {
+          file: { format: "binary", description: "The raw document data" },
+          file_name: { description: "The original filename for `file`." },
+        },
+        required: ["file", "file_name", "documentable_type"],
+      },
+    };
+
+    registerToolSchema(schema);
+
+    expect(schema.inputSchema.properties).not.toHaveProperty("file_name");
+    expect(schema.inputSchema.required).toEqual(["file", "documentable_type"]);
+  });
 });
 
 describe("interceptFileArguments", () => {
@@ -210,5 +228,60 @@ describe("interceptFileArguments", () => {
 
     expect(original.file).toBe(filePath);
   });
-});
 
+  it("injects file_name from basename, overwriting any caller-supplied value", async () => {
+    const filePath = join(TEST_DIR, "my report - final.pdf");
+    writeFileSync(filePath, "content");
+
+    registerToolSchema({
+      name: "upload",
+      inputSchema: {
+        properties: {
+          file: { format: "binary" },
+          file_name: { description: "filename" },
+        },
+      },
+    });
+
+    const result = await interceptFileArguments("upload", {
+      file: filePath,
+      file_name: "wrong-name.txt",
+    });
+
+    expect(result.file_name).toBe("my report - final.pdf");
+  });
+
+  it("does not inject file_name when the schema does not declare the sibling", async () => {
+    const filePath = join(TEST_DIR, "test.txt");
+    writeFileSync(filePath, "content");
+
+    registerToolSchema({
+      name: "upload-no-sibling",
+      inputSchema: { properties: { file: { format: "binary" } } },
+    });
+
+    const result = await interceptFileArguments("upload-no-sibling", {
+      file: filePath,
+    });
+
+    expect(result).not.toHaveProperty("file_name");
+  });
+
+  it("does not inject file_name when value is already base64", async () => {
+    const base64 = Buffer.from("hello world").toString("base64");
+
+    registerToolSchema({
+      name: "upload",
+      inputSchema: {
+        properties: {
+          file: { format: "binary" },
+          file_name: { description: "filename" },
+        },
+      },
+    });
+
+    const result = await interceptFileArguments("upload", { file: base64 });
+
+    expect(result).not.toHaveProperty("file_name");
+  });
+});

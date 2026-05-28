@@ -1,4 +1,5 @@
 import { createReadStream, statSync } from "node:fs";
+import { basename } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { text } from "node:stream/consumers";
 import { Base64Encode } from "base64-stream";
@@ -7,19 +8,27 @@ interface ToolSchema {
   name: string;
   inputSchema?: {
     properties?: Record<string, { description?: string; format?: string }>;
+    required?: string[];
   };
 }
 
 const fileParamCache = new Map<string, Set<string>>();
+const fileNameParamCache = new Map<string, Set<string>>();
 
 /**
  * Registers a tool's schema and caches the names of any parameters with
  * `format: "binary"`. The description of those parameters is also prefixed with a
  * "Provide a file path." string.
+ *
+ * If the server declares a `<name>_name` parameter alongside a binary param, it
+ * is stripped from the schema forwarded to the client. The proxy fills it
+ * automatically from the file's basename, so the client should not see or fill
+ * it.
  * @param tool - The tool schema to inspect and register.
  */
 export function registerToolSchema(tool: ToolSchema): void {
   const fileParams = new Set<string>();
+  const fileNameParams = new Set<string>();
   const properties = tool.inputSchema?.properties;
 
   if (properties) {
@@ -31,15 +40,35 @@ export function registerToolSchema(tool: ToolSchema): void {
           : "Provide a file path.";
       }
     }
+
+    for (const paramName of fileParams) {
+      const siblingKey = `${paramName}_name`;
+      if (siblingKey in properties) {
+        fileNameParams.add(paramName);
+        delete properties[siblingKey];
+      }
+    }
+  }
+
+  const required = tool.inputSchema?.required;
+  if (required && fileNameParams.size > 0) {
+    const siblingKeys = new Set(
+      Array.from(fileNameParams, (name) => `${name}_name`),
+    );
+    tool.inputSchema!.required = required.filter((key) => !siblingKeys.has(key));
   }
 
   if (fileParams.size > 0) {
     fileParamCache.set(tool.name, fileParams);
   }
+  if (fileNameParams.size > 0) {
+    fileNameParamCache.set(tool.name, fileNameParams);
+  }
 }
 
 export function clearSchemaCache(): void {
   fileParamCache.clear();
+  fileNameParamCache.clear();
 }
 
 export function getCachedFileParams(toolName: string): Set<string> | undefined {
@@ -84,6 +113,7 @@ export async function interceptFileArguments(
     return args;
   }
 
+  const fileNameParams = fileNameParamCache.get(toolName);
   const result = { ...args };
 
   for (const paramName of fileParams) {
@@ -95,6 +125,10 @@ export async function interceptFileArguments(
 
     if (statSync(value, { throwIfNoEntry: false })?.isFile()) {
       result[paramName] = await streamFileAsBase64(value);
+
+      if (fileNameParams?.has(paramName)) {
+        result[`${paramName}_name`] = basename(value);
+      }
     } else if (!isBase64(value)) {
       throw new Error(`Tool "${toolName}", param "${paramName}": "${value}" is not a valid file path or base64-encoded string`);
     }
