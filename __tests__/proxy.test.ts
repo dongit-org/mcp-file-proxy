@@ -40,7 +40,9 @@ const mockClient = {
 };
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
-  Client: vi.fn().mockImplementation(() => mockClient),
+  Client: vi.fn().mockImplementation(function () {
+    return mockClient;
+  }),
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
