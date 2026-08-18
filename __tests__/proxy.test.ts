@@ -49,6 +49,10 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: vi.fn(),
 }));
 
+vi.mock("../src/tls.js", () => ({
+  createTlsFetch: vi.fn().mockReturnValue(undefined),
+}));
+
 import { createProxyServer } from "../src/proxy.js";
 import type { ProxyConfig } from "../src/config.js";
 
@@ -111,6 +115,56 @@ describe("createProxyServer", () => {
     await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
       /Failed to connect to.*Connection refused/,
     );
+  });
+
+  function handshakeAbortError(): TypeError {
+    return new TypeError("fetch failed", {
+      cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+    });
+  }
+
+  it("suggests the mTLS variables when an https handshake is aborted without a client certificate", async () => {
+    mockConnect.mockRejectedValueOnce(handshakeAbortError());
+
+    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
+      /set MCP_CLIENT_CERT and MCP_CLIENT_KEY/,
+    );
+  });
+
+  it("does not suggest the mTLS variables for plain-http URLs", async () => {
+    mockConnect.mockRejectedValueOnce(handshakeAbortError());
+
+    const error = await createProxyServer({ ...testConfig, url: "http://example.com/mcp" }, testPkg).then(
+      () => { throw new Error("expected connection to fail"); },
+      (e: unknown) => e,
+    );
+
+    expect((error as Error).message).toBe(
+      "Failed to connect to http://example.com/mcp: other side closed",
+    );
+  });
+
+  it("suggests checking the client certificate when the handshake is aborted despite mTLS being configured", async () => {
+    mockConnect.mockRejectedValueOnce(handshakeAbortError());
+
+    await expect(
+      createProxyServer(
+        { ...testConfig, tls: { certPath: "/client.crt", keyPath: "/client.key" } },
+        testPkg,
+      ),
+    ).rejects.toThrow(/server may have rejected the client certificate/);
+  });
+
+  it("explains trust-store replacement when verification fails with a CA bundle configured", async () => {
+    mockConnect.mockRejectedValueOnce(new TypeError("fetch failed", {
+      cause: Object.assign(new Error("unable to verify the first certificate"), {
+        code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      }),
+    }));
+
+    await expect(
+      createProxyServer({ ...testConfig, tls: { caPath: "/ca.crt" } }, testPkg),
+    ).rejects.toThrow(/MCP_CA_CERT replaces Node's default trust store/);
   });
 
   describe("tools/list forwarding", () => {

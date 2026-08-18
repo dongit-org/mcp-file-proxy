@@ -20,11 +20,12 @@
   },
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "base64-stream": "^1.0.0"
+    "base64-stream": "^1.0.0",
+    "undici": "^7.29.0"
   },
   "devDependencies": {
     "@types/base64-stream": "^1.0.5",

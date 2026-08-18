@@ -1,7 +1,19 @@
+export interface TlsConfig {
+  /** Path to the PEM-encoded client certificate presented for mutual TLS. */
+  certPath?: string;
+  /** Path to the PEM-encoded private key matching the client certificate. */
+  keyPath?: string;
+  /** Passphrase for the private key, when the key file is encrypted. */
+  keyPassphrase?: string;
+  /** Path to a PEM CA bundle used to verify the server certificate. */
+  caPath?: string;
+}
+
 export interface ProxyConfig {
   url: string;
   headers: Record<string, string>;
   acceptInsecureCerts: boolean;
+  tls?: TlsConfig;
 }
 
 /**
@@ -10,7 +22,8 @@ export interface ProxyConfig {
  * @param env - Environment variables to read from. Defaults to `process.env`.
  * @param argv - CLI argument list. Defaults to `process.argv`.
  * @returns The parsed {@link ProxyConfig}.
- * @throws If `MCP_URL` is missing or invalid, or if `MCP_HEADERS` is malformed.
+ * @throws If `MCP_URL` is missing or invalid, if `MCP_HEADERS` is malformed,
+ *   or if the mutual-TLS variables are set inconsistently.
  */
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
@@ -44,9 +57,27 @@ export function loadConfig(
 
   const acceptInsecureCerts = argv.includes("--accept-insecure-certs");
 
+  const certPath = env.MCP_CLIENT_CERT;
+  const keyPath = env.MCP_CLIENT_KEY;
+  const keyPassphrase = env.MCP_CLIENT_KEY_PASSPHRASE;
+  const caPath = env.MCP_CA_CERT;
+
+  if (Boolean(certPath) !== Boolean(keyPath)) {
+    throw new Error("MCP_CLIENT_CERT and MCP_CLIENT_KEY must be set together");
+  }
+
+  if (keyPassphrase && !keyPath) {
+    throw new Error("MCP_CLIENT_KEY_PASSPHRASE requires MCP_CLIENT_KEY");
+  }
+
+  const tls: TlsConfig | undefined = certPath || caPath
+    ? { certPath, keyPath, keyPassphrase, caPath }
+    : undefined;
+
   return {
     url,
     headers,
     acceptInsecureCerts,
+    tls,
   };
 }
