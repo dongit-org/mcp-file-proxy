@@ -25,7 +25,7 @@ function validateTlsMaterial(options: ConnectionOptions): void {
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
     const code = error instanceof Error && "code" in error
-      ? String((error as { code: unknown }).code)
+      ? String(error.code)
       : "";
 
     if (code.includes("BAD_DECRYPT")) {
@@ -92,10 +92,15 @@ export function createTlsFetch(config: ProxyConfig): FetchLike | undefined {
   // The built-in fetch is used (not undici's own) because the MCP SDK
   // brand-checks Response instances, and Node's fetch accepts a dispatcher
   // from the npm undici package.
-  return (url, init) =>
-    fetch(url, {
+  return (url, init) => {
+    // `dispatcher` is an undici extension that Node's fetch honours but
+    // RequestInit does not declare, so it is widened rather than asserted.
+    const requestInit: RequestInit & { dispatcher: Agent } = {
       ...init,
       redirect: "manual",
       dispatcher,
-    } as RequestInit);
+    };
+
+    return fetch(url, requestInit);
+  };
 }

@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, type Server } from "node:https";
 import { readFileSync } from "node:fs";
-import type { TLSSocket } from "node:tls";
-import type { AddressInfo } from "node:net";
+import { TLSSocket } from "node:tls";
 import { createTlsFetch } from "../src/tls.js";
 import type { ProxyConfig } from "../src/config.js";
 import { generateTestPki, removeTestPki, type TestPki } from "./helpers/certs.js";
@@ -21,15 +20,22 @@ function makeConfig(overrides: Partial<ProxyConfig>): ProxyConfig {
   };
 }
 
+/** Returns the TCP port a listening server is bound to. */
+function listeningPort(server: { address(): { port: number } | string | null }): number {
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("expected the server to be listening on a TCP port");
+  }
+  return address.port;
+}
+
 /** Walks the cause chain and returns the deepest error's code. */
-function rootCode(error: unknown): string | undefined {
+function rootCode(error: unknown): unknown {
   let current = error;
   while (current instanceof Error && current.cause instanceof Error) {
     current = current.cause;
   }
-  return current instanceof Error && "code" in current
-    ? (current as { code: string }).code
-    : undefined;
+  return current instanceof Error && "code" in current ? current.code : undefined;
 }
 
 beforeAll(async () => {
@@ -54,7 +60,7 @@ beforeAll(async () => {
         res.end();
         return;
       }
-      const peer = (req.socket as TLSSocket).getPeerCertificate();
+      const peer = req.socket instanceof TLSSocket ? req.socket.getPeerCertificate() : undefined;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ clientCN: peer?.subject?.CN ?? null }));
     },
@@ -62,8 +68,7 @@ beforeAll(async () => {
   server = httpsServer;
 
   await new Promise<void>((resolve) => httpsServer.listen(0, "127.0.0.1", resolve));
-  const { port } = httpsServer.address() as AddressInfo;
-  baseUrl = `https://localhost:${port}/`;
+  baseUrl = `https://localhost:${listeningPort(httpsServer)}/`;
 });
 
 afterAll(async () => {

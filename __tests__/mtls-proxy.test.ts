@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, type Server as HttpsServer } from "node:https";
 import { readFileSync } from "node:fs";
-import type { AddressInfo } from "node:net";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -74,8 +73,12 @@ beforeAll(async () => {
 
   const listeningServer = httpsServer;
   await new Promise<void>((resolve) => listeningServer.listen(0, "127.0.0.1", resolve));
-  const { port } = listeningServer.address() as AddressInfo;
-  mcpUrl = `https://localhost:${port}/mcp`;
+
+  const address = listeningServer.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("expected the server to be listening on a TCP port");
+  }
+  mcpUrl = `https://localhost:${address.port}/mcp`;
 });
 
 afterAll(async () => {
@@ -151,7 +154,7 @@ describe("createProxyServer against an mTLS remote", () => {
 
     const error = await createProxyServer(config, testPkg).then(
       () => { throw new Error("expected connection to fail"); },
-      (e: unknown) => e as Error,
+      (e: Error) => e,
     );
 
     expect(error.message).toBe(`Failed to connect to ${mcpUrl}`);
@@ -169,6 +172,6 @@ describe("createProxyServer against an mTLS remote", () => {
       "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED",
       "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
       "ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE",
-    ]).toContain((root as { code?: string }).code);
+    ]).toContain(root instanceof Error && "code" in root ? root.code : undefined);
   });
 });

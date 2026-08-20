@@ -39,6 +39,15 @@ describe("loadConfig", () => {
     ).toThrow("MCP_HEADERS must be a JSON object");
   });
 
+  it("throws when an MCP_HEADERS value is not a string", () => {
+    expect(() =>
+      loadConfig({
+        MCP_URL: "https://example.com/mcp",
+        MCP_HEADERS: JSON.stringify({ "X-Count": 5 }),
+      }),
+    ).toThrow("MCP_HEADERS value for X-Count must be a string");
+  });
+
   it("sets acceptInsecureCerts when --accept-insecure-certs flag is present", () => {
     const config = loadConfig(validEnv, ["node", "index.js", "--accept-insecure-certs"]);
 

@@ -52,7 +52,12 @@ export function loadConfig(
       throw new TypeError("MCP_HEADERS must be a JSON object");
     }
 
-    headers = parsed as Record<string, string>;
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value !== "string") {
+        throw new TypeError(`MCP_HEADERS value for ${key} must be a string`);
+      }
+      headers[key] = value;
+    }
   }
 
   const acceptInsecureCerts = argv.includes("--accept-insecure-certs");

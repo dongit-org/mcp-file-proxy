@@ -101,7 +101,7 @@ describe("createProxyServer", () => {
 
     return await createProxyServer(config, testPkg).then(
       () => { throw new Error("expected connection to fail"); },
-      (e: unknown) => e as Error,
+      (e: Error) => e,
     );
   }
 
@@ -120,7 +120,7 @@ describe("createProxyServer", () => {
     const error = await connectionError(original);
 
     expect(error.cause).toBe(original);
-    expect((error.cause as Error).cause).toBe(root);
+    expect(original.cause).toBe(root);
   });
 
   it("wraps a rejection that is not an Error without losing it", async () => {
