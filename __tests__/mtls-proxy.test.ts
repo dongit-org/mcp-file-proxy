@@ -153,8 +153,22 @@ describe("createProxyServer against an mTLS remote", () => {
       () => { throw new Error("expected connection to fail"); },
       (e: unknown) => e as Error,
     );
-    expect(error.message).toMatch(
-      /^Failed to connect to .+: .+ \((UND_ERR_SOCKET|ECONNRESET|EPIPE|ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED|ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE|ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE)\)$/,
-    );
+
+    expect(error.message).toBe(`Failed to connect to ${mcpUrl}`);
+
+    // The server aborts the handshake when no certificate is presented; the
+    // exact code varies by platform and TLS version.
+    let root: unknown = error;
+    while (root instanceof Error && root.cause instanceof Error) {
+      root = root.cause;
+    }
+    expect([
+      "UND_ERR_SOCKET",
+      "ECONNRESET",
+      "EPIPE",
+      "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED",
+      "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+      "ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE",
+    ]).toContain((root as { code?: string }).code);
   });
 });

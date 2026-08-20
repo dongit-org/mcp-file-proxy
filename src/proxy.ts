@@ -24,22 +24,6 @@ export interface ProxyServer {
   remoteClient: Client;
 }
 
-function getRootCause(error: unknown): Error | undefined {
-  let current = error;
-  while (current instanceof Error && current.cause instanceof Error) {
-    current = current.cause;
-  }
-  return current instanceof Error ? current : undefined;
-}
-
-function formatConnectionError(error: unknown, config: ProxyConfig): string {
-  const root = getRootCause(error);
-  const detail = root?.message ?? (error instanceof Error ? error.message : String(error));
-  const code = root && "code" in root ? String((root as { code: unknown }).code) : undefined;
-
-  return `Failed to connect to ${config.url}: ${detail}${code ? ` (${code})` : ""}`;
-}
-
 /**
  * Connects to the remote MCP server and creates a local proxy server that
  * forwards all requests to it. Tool calls are intercepted via
@@ -64,8 +48,7 @@ export async function createProxyServer(config: ProxyConfig, pkg: PackageInfo): 
   try {
     await remoteClient.connect(transport);
   } catch (error: unknown) {
-    const message = formatConnectionError(error, config);
-    throw new Error(message, { cause: error });
+    throw new Error(`Failed to connect to ${config.url}`, { cause: error });
   }
 
   const server = new Server(
