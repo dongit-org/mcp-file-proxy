@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createSecureContext, type ConnectionOptions } from "node:tls";
+import { X509Certificate } from "node:crypto";
 import { Agent } from "undici";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { ProxyConfig } from "./config.js";
@@ -12,6 +13,25 @@ function readPemFile(path: string, variableName: string): string {
     throw new Error(`Cannot read the ${variableName} file at ${path}: ${detail}`);
   }
 }
+
+
+function validateCaBundle(ca: string): void {
+  const certificates = ca.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+
+  if (certificates === null) {
+    throw new Error("MCP_CA_CERT contains no PEM certificate");
+  }
+
+  for (const certificate of certificates) {
+    try {
+      new X509Certificate(certificate);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`MCP_CA_CERT contains a certificate that cannot be parsed: ${detail}`, { cause: error });
+    }
+  }
+}
+
 
 /**
  * Builds a throwaway secure context from the loaded TLS material so that a
@@ -69,7 +89,9 @@ function createTlsDispatcher(config: ProxyConfig): Agent | undefined {
     connect.passphrase = tls.keyPassphrase;
   }
   if (tls.caPath) {
-    connect.ca = readPemFile(tls.caPath, "MCP_CA_CERT");
+    const ca = readPemFile(tls.caPath, "MCP_CA_CERT");
+    validateCaBundle(ca);
+    connect.ca = ca;
   }
 
   validateTlsMaterial(connect);

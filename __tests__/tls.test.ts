@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, type Server } from "node:https";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { TLSSocket } from "node:tls";
 import { createTlsFetch } from "../src/tls.js";
 import type { ProxyConfig } from "../src/config.js";
+import { join } from "node:path";
 import { generateTestPki, removeTestPki, type TestPki } from "./helpers/certs.js";
 
 let pki: TestPki | undefined;
@@ -302,6 +303,49 @@ describe("createTlsFetch", () => {
         caPath: pki!.caCert,
       },
     }))).toThrow("MCP_CLIENT_KEY_PASSPHRASE does not decrypt MCP_CLIENT_KEY");
+  });
+
+  /** Writes a bad CA bundle into the throwaway PKI directory. */
+  function writeCaFile(name: string, contents: string): string {
+    const path = join(pki!.dir, name);
+    writeFileSync(path, contents);
+    return path;
+  }
+
+  it("fails at startup when the CA bundle holds no certificate", () => {
+    const caPath = writeCaFile("garbage.crt", "not a pem at all\n");
+
+    expect(() => createTlsFetch(makeConfig({ tls: { caPath } })))
+      .toThrow("MCP_CA_CERT contains no PEM certificate");
+  });
+
+  it("fails at startup when the CA bundle is a private key", () => {
+    // Pointing MCP_CA_CERT at the wrong PEM file is the easy mistake, and it
+    // would otherwise make every connection fail verification instead.
+    const caPath = writeCaFile("key-as-ca.crt", readFileSync(pki!.clientKey, "utf8"));
+
+    expect(() => createTlsFetch(makeConfig({ tls: { caPath } })))
+      .toThrow("MCP_CA_CERT contains no PEM certificate");
+  });
+
+  it("fails at startup when a certificate in the CA bundle is corrupt", () => {
+    const corrupted = readFileSync(pki!.caCert, "utf8").replace(/^(.{40})/m, "!!!!not-base64!!!!");
+    const caPath = writeCaFile("corrupt.crt", corrupted);
+
+    expect(() => createTlsFetch(makeConfig({ tls: { caPath } })))
+      .toThrow(/MCP_CA_CERT contains a certificate that cannot be parsed/);
+  });
+
+  it("accepts a CA bundle holding more than one certificate", async () => {
+    const bundle = readFileSync(pki!.caCert, "utf8");
+    const caPath = writeCaFile("bundle.crt", `${bundle}${bundle}`);
+
+    const fetch = createTlsFetch(makeConfig({
+      tls: { certPath: pki!.clientCert, keyPath: pki!.clientKey, caPath },
+    }));
+    const response = await fetch(baseUrl);
+
+    expect(response.ok).toBe(true);
   });
 
   it("fails at startup when the certificate and key do not match", () => {
