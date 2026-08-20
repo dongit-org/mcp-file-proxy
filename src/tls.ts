@@ -44,23 +44,14 @@ function validateTlsMaterial(options: ConnectionOptions): void {
   }
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
 /**
- * Creates a fetch implementation that applies the TLS settings from the
- * config: a client certificate for mutual TLS and/or a custom CA bundle.
- * PEM files are read and validated eagerly so misconfiguration fails at
- * startup. Redirects are never followed: the client certificate is a
- * connection-level credential, and following a redirect would present it
- * to whatever host the redirect points at.
- *
- * @param config - Proxy configuration; only `tls` and `acceptInsecureCerts`
- *   are used.
- * @returns A {@link FetchLike} that routes requests through a TLS-configured
- *   undici agent, or `undefined` when no TLS settings are present so the
- *   transport keeps using the default fetch.
- * @throws If a configured PEM file cannot be read or the TLS material is
- *   invalid (wrong passphrase, mismatched cert/key, non-PEM file).
+ * Builds the undici agent carrying the configured TLS material, reading and
+ * validating the PEM files eagerly so misconfiguration fails at startup.
  */
-export function createTlsFetch(config: ProxyConfig): FetchLike | undefined {
+function createTlsDispatcher(config: ProxyConfig): Agent | undefined {
   const tls = config.tls;
   if (!tls) {
     return undefined;
@@ -87,20 +78,60 @@ export function createTlsFetch(config: ProxyConfig): FetchLike | undefined {
     connect.rejectUnauthorized = false;
   }
 
-  const dispatcher = new Agent({ connect });
+  return new Agent({ connect });
+}
 
-  // The built-in fetch is used (not undici's own) because the MCP SDK
-  // brand-checks Response instances, and Node's fetch accepts a dispatcher
-  // from the npm undici package.
-  return (url, init) => {
-    // `dispatcher` is an undici extension that Node's fetch honours but
-    // RequestInit does not declare, so it is widened rather than asserted.
-    const requestInit: RequestInit & { dispatcher: Agent } = {
-      ...init,
-      redirect: "manual",
-      dispatcher,
-    };
+/**
+ * Creates the fetch used for every request to the remote, with or without
+ * TLS configured. Redirects are followed only within the origin of the
+ * configured URL, keeping the client certificate and MCP_HEADERS off other
+ * hosts, and are re-issued with the original method and body instead of
+ * being downgraded to GET the way fetch treats 301, 302 and 303.
+ *
+ * @throws If a configured PEM file cannot be read or the TLS material is
+ *   invalid (wrong passphrase, mismatched cert/key, non-PEM file).
+ */
+export function createTlsFetch(config: ProxyConfig): FetchLike {
+  const dispatcher = createTlsDispatcher(config);
 
-    return fetch(url, requestInit);
+  return async (url, init) => {
+    const origin = new URL(url).origin;
+    let target = new URL(url);
+
+    for (let followed = 0; ; followed++) {
+      // The built-in fetch is used (not undici's own) because the MCP SDK
+      // brand-checks Response instances, and Node's fetch accepts a
+      // dispatcher from the npm undici package. `dispatcher` is an undici
+      // extension that RequestInit does not declare, so the init is widened
+      // rather than asserted.
+      const requestInit: RequestInit & { dispatcher?: Agent } = {
+        ...init,
+        redirect: "manual",
+      };
+      if (dispatcher) {
+        requestInit.dispatcher = dispatcher;
+      }
+
+      const response = await fetch(target, requestInit);
+
+      const location = REDIRECT_STATUSES.has(response.status)
+        ? response.headers.get("location")
+        : null;
+      if (location === null) {
+        return response;
+      }
+
+      const next = new URL(location, target);
+      if (next.origin !== origin) {
+        throw new Error(
+          `Refusing to follow the redirect from ${target.href} to ${next.href}: it leaves ${origin}`,
+        );
+      }
+      if (followed >= MAX_REDIRECTS) {
+        throw new Error(`Stopped after ${MAX_REDIRECTS} redirects, last was ${next.href}`);
+      }
+
+      target = next;
+    }
   };
 }
