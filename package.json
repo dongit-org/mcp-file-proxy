@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p __tests__/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },

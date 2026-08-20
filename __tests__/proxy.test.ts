@@ -96,75 +96,72 @@ describe("createProxyServer", () => {
     expect(mockConnect).toHaveBeenCalled();
   });
 
-  it("throws a descriptive error for TLS certificate failures", async () => {
-    const tlsError = new TypeError("fetch failed", {
+  async function connectionError(rejection: unknown, config = testConfig): Promise<Error> {
+    mockConnect.mockRejectedValueOnce(rejection);
+
+    return await createProxyServer(config, testPkg).then(
+      () => { throw new Error("expected connection to fail"); },
+      (e: unknown) => e as Error,
+    );
+  }
+
+  it("reports the root cause of a nested fetch failure, not undici's wrapper", async () => {
+    const error = await connectionError(new TypeError("fetch failed", {
       cause: new Error("self-signed certificate", {
         cause: Object.assign(new Error("self signed certificate"), { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }),
       }),
-    });
-    mockConnect.mockRejectedValueOnce(tlsError);
-
-    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
-      /TLS certificate error.*DEPTH_ZERO_SELF_SIGNED_CERT.*--accept-insecure-certs/,
-    );
-  });
-
-  it("throws a descriptive error for generic connection failures", async () => {
-    mockConnect.mockRejectedValueOnce(new Error("Connection refused"));
-
-    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
-      /Failed to connect to.*Connection refused/,
-    );
-  });
-
-  function handshakeAbortError(): TypeError {
-    return new TypeError("fetch failed", {
-      cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
-    });
-  }
-
-  it("suggests the mTLS variables when an https handshake is aborted without a client certificate", async () => {
-    mockConnect.mockRejectedValueOnce(handshakeAbortError());
-
-    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
-      /set MCP_CLIENT_CERT and MCP_CLIENT_KEY/,
-    );
-  });
-
-  it("does not suggest the mTLS variables for plain-http URLs", async () => {
-    mockConnect.mockRejectedValueOnce(handshakeAbortError());
-
-    const error = await createProxyServer({ ...testConfig, url: "http://example.com/mcp" }, testPkg).then(
-      () => { throw new Error("expected connection to fail"); },
-      (e: unknown) => e,
-    );
-
-    expect((error as Error).message).toBe(
-      "Failed to connect to http://example.com/mcp: other side closed",
-    );
-  });
-
-  it("suggests checking the client certificate when the handshake is aborted despite mTLS being configured", async () => {
-    mockConnect.mockRejectedValueOnce(handshakeAbortError());
-
-    await expect(
-      createProxyServer(
-        { ...testConfig, tls: { certPath: "/client.crt", keyPath: "/client.key" } },
-        testPkg,
-      ),
-    ).rejects.toThrow(/server may have rejected the client certificate/);
-  });
-
-  it("explains trust-store replacement when verification fails with a CA bundle configured", async () => {
-    mockConnect.mockRejectedValueOnce(new TypeError("fetch failed", {
-      cause: Object.assign(new Error("unable to verify the first certificate"), {
-        code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-      }),
     }));
 
-    await expect(
-      createProxyServer({ ...testConfig, tls: { caPath: "/ca.crt" } }, testPkg),
-    ).rejects.toThrow(/MCP_CA_CERT replaces Node's default trust store/);
+    expect(error.message).toBe(
+      "Failed to connect to https://example.com/mcp: self signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)",
+    );
+  });
+
+  it("reports the error code alongside the message", async () => {
+    const error = await connectionError(new TypeError("fetch failed", {
+      cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+    }));
+
+    expect(error.message).toBe(
+      "Failed to connect to https://example.com/mcp: other side closed (UND_ERR_SOCKET)",
+    );
+  });
+
+  it("omits the code for errors that carry none", async () => {
+    const error = await connectionError(new Error("Connection refused"));
+
+    expect(error.message).toBe("Failed to connect to https://example.com/mcp: Connection refused");
+  });
+
+  it("does not add remediation advice when TLS material is configured", async () => {
+    const error = await connectionError(
+      new TypeError("fetch failed", {
+        cause: Object.assign(new Error("unable to verify the first certificate"), {
+          code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        }),
+      }),
+      { ...testConfig, tls: { caPath: "/ca.crt", certPath: "/client.crt", keyPath: "/client.key" } },
+    );
+
+    expect(error.message).toBe(
+      "Failed to connect to https://example.com/mcp: unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)",
+    );
+  });
+
+  it("keeps the original error as the cause", async () => {
+    const original = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }),
+    });
+
+    const error = await connectionError(original);
+
+    expect(error.cause).toBe(original);
+  });
+
+  it("falls back to the thrown value when it is not an Error", async () => {
+    const error = await connectionError("something went wrong");
+
+    expect(error.message).toBe("Failed to connect to https://example.com/mcp: something went wrong");
   });
 
   describe("tools/list forwarding", () => {

@@ -24,30 +24,6 @@ export interface ProxyServer {
   remoteClient: Client;
 }
 
-const TLS_ERROR_CODES = new Set([
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "SELF_SIGNED_CERT_IN_CHAIN",
-  "CERT_HAS_EXPIRED",
-  "ERR_TLS_CERT_ALTNAME_INVALID",
-  "CERT_NOT_YET_VALID",
-]);
-
-const CHAIN_TRUST_ERROR_CODES = new Set([
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "SELF_SIGNED_CERT_IN_CHAIN",
-]);
-
-const HANDSHAKE_ABORT_ERROR_CODES = new Set([
-  "UND_ERR_SOCKET",
-  "ECONNRESET",
-  "EPIPE",
-  "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED",
-  "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
-  "ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE",
-]);
-
 function getRootCause(error: unknown): Error | undefined {
   let current = error;
   while (current instanceof Error && current.cause instanceof Error) {
@@ -57,27 +33,11 @@ function getRootCause(error: unknown): Error | undefined {
 }
 
 function formatConnectionError(error: unknown, config: ProxyConfig): string {
-  const url = config.url;
   const root = getRootCause(error);
-  const code = root && "code" in root ? (root as { code: string }).code : undefined;
-  const isHttps = url.toLowerCase().startsWith("https:");
+  const detail = root?.message ?? (error instanceof Error ? error.message : String(error));
+  const code = root && "code" in root ? String((root as { code: unknown }).code) : undefined;
 
-  if (code && TLS_ERROR_CODES.has(code)) {
-    if (config.tls?.caPath && CHAIN_TRUST_ERROR_CODES.has(code)) {
-      return `TLS certificate error connecting to ${url}: ${root!.message} (${code}). MCP_CA_CERT replaces Node's default trust store; make sure the bundle includes the CA that signed the server certificate.`;
-    }
-    return `TLS certificate error connecting to ${url}: ${root!.message} (${code}). Use --accept-insecure-certs to bypass certificate verification, or set MCP_CA_CERT to trust a private CA.`;
-  }
-
-  if (code && isHttps && HANDSHAKE_ABORT_ERROR_CODES.has(code)) {
-    if (config.tls?.certPath) {
-      return `Failed to connect to ${url}: ${root!.message} (${code}). The server may have rejected the client certificate; check that it is signed by a CA the server trusts.`;
-    }
-    return `Failed to connect to ${url}: ${root!.message} (${code}). If the server requires a client certificate (mutual TLS), set MCP_CLIENT_CERT and MCP_CLIENT_KEY.`;
-  }
-
-  const detail = root?.message || (error instanceof Error ? error.message : String(error));
-  return `Failed to connect to ${url}: ${detail}`;
+  return `Failed to connect to ${config.url}: ${detail}${code ? ` (${code})` : ""}`;
 }
 
 /**

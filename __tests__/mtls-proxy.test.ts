@@ -141,7 +141,7 @@ describe("createProxyServer against an mTLS remote", () => {
     }
   });
 
-  it("fails with an mTLS hint when no client certificate is configured", async () => {
+  it("fails with the underlying error code when no client certificate is configured", async () => {
     const config: ProxyConfig = {
       url: mcpUrl,
       headers: {},
@@ -149,8 +149,12 @@ describe("createProxyServer against an mTLS remote", () => {
       tls: { caPath: pki!.caCert },
     };
 
-    await expect(createProxyServer(config, testPkg)).rejects.toThrow(
-      /set MCP_CLIENT_CERT and MCP_CLIENT_KEY/,
+    const error = await createProxyServer(config, testPkg).then(
+      () => { throw new Error("expected connection to fail"); },
+      (e: unknown) => e as Error,
+    );
+    expect(error.message).toMatch(
+      /^Failed to connect to .+: .+ \((UND_ERR_SOCKET|ECONNRESET|EPIPE|ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED|ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE|ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE)\)$/,
     );
   });
 });
