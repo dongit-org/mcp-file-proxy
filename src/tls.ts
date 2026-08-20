@@ -15,9 +15,9 @@ function readPemFile(path: string, variableName: string): string {
 
 /**
  * Builds a throwaway secure context from the loaded TLS material so that a
- * wrong passphrase, a mismatched certificate/key pair, or a non-PEM file
- * fails at startup with an actionable message instead of as an opaque
- * OpenSSL error on the first request.
+ * missing or wrong passphrase, a mismatched certificate/key pair, or a
+ * non-PEM file fails at startup with an actionable message instead of as an
+ * opaque OpenSSL error on the first request.
  */
 function validateTlsMaterial(options: ConnectionOptions): void {
   try {
@@ -29,6 +29,9 @@ function validateTlsMaterial(options: ConnectionOptions): void {
       : "";
 
     if (code.includes("BAD_DECRYPT")) {
+      if (options.passphrase === undefined) {
+        throw new Error("MCP_CLIENT_KEY is encrypted but MCP_CLIENT_KEY_PASSPHRASE is not set", { cause: error });
+      }
       throw new Error("MCP_CLIENT_KEY_PASSPHRASE does not decrypt MCP_CLIENT_KEY", { cause: error });
     }
     if (code.includes("KEY_VALUES_MISMATCH")) {
