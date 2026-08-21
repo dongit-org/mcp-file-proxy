@@ -32,13 +32,6 @@ function validateCaBundle(ca: string): void {
   }
 }
 
-
-/**
- * Builds a throwaway secure context from the loaded TLS material so that a
- * missing or wrong passphrase, a mismatched certificate/key pair, or a
- * non-PEM file fails at startup with an actionable message instead of as an
- * opaque OpenSSL error on the first request.
- */
 function validateTlsMaterial(options: ConnectionOptions): void {
   try {
     createSecureContext(options);
@@ -67,10 +60,6 @@ function validateTlsMaterial(options: ConnectionOptions): void {
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_REDIRECTS = 5;
 
-/**
- * Builds the undici agent carrying the configured TLS material, reading and
- * validating the PEM files eagerly so misconfiguration fails at startup.
- */
 function createTlsDispatcher(config: ProxyConfig): EnvHttpProxyAgent | undefined {
   const tls = config.tls;
   if (!tls) {
@@ -100,19 +89,11 @@ function createTlsDispatcher(config: ProxyConfig): EnvHttpProxyAgent | undefined
     connect.rejectUnauthorized = false;
   }
 
+  // An EnvHttpProxyAgent rather than a plain Agent because Node's fetch
+  // ignores HTTP_PROXY, HTTPS_PROXY and NO_PROXY.
   return new EnvHttpProxyAgent({ connect, requestTls: connect });
 }
 
-/**
- * Creates the fetch used for every request to the remote, with or without
- * TLS configured. Redirects are followed only within the origin of the
- * configured URL, keeping the client certificate and MCP_HEADERS off other
- * hosts, and are re-issued with the original method and body instead of
- * being downgraded to GET the way fetch treats 301, 302 and 303.
- *
- * @throws If a configured PEM file cannot be read or the TLS material is
- *   invalid (wrong passphrase, mismatched cert/key, non-PEM file).
- */
 export function createTlsFetch(config: ProxyConfig): FetchLike {
   const dispatcher = createTlsDispatcher(config);
 
@@ -121,11 +102,6 @@ export function createTlsFetch(config: ProxyConfig): FetchLike {
     let target = new URL(url);
 
     for (let followed = 0; ; followed++) {
-      // The built-in fetch is used (not undici's own) because the MCP SDK
-      // brand-checks Response instances, and Node's fetch accepts a
-      // dispatcher from the npm undici package. `dispatcher` is an undici
-      // extension that RequestInit does not declare, so the init is widened
-      // rather than asserted.
       const requestInit: RequestInit & { dispatcher?: EnvHttpProxyAgent } = {
         ...init,
         redirect: "manual",

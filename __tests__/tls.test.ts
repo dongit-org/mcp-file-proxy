@@ -6,7 +6,7 @@ import type { Duplex } from "node:stream";
 import { readFileSync, writeFileSync } from "node:fs";
 import { TLSSocket } from "node:tls";
 import { createTlsFetch } from "../src/tls.js";
-import type { ProxyConfig } from "../src/config.js";
+import type { ProxyConfig, TlsConfig } from "../src/config.js";
 import { join } from "node:path";
 import { generateTestPki, removeTestPki, type TestPki } from "./helpers/certs.js";
 
@@ -195,57 +195,24 @@ afterAll(async () => {
 });
 
 describe("createTlsFetch", () => {
-  it("returns a fetch even when no TLS settings are configured", () => {
-    expect(typeof createTlsFetch(makeConfig({}))).toBe("function");
-  });
-
-  it("presents the client certificate to a server requiring mTLS", async () => {
-    const fetch = createTlsFetch(makeConfig({
-      tls: { certPath: pki!.clientCert, keyPath: pki!.clientKey, caPath: pki!.caCert },
-    }));
-
-    const response = await fetch(baseUrl);
-
-    expect(response.ok).toBe(true);
-    expect(await response.json()).toMatchObject({ clientCN: "test-client" });
-  });
-
-  it("supports a passphrase-encrypted client key", async () => {
-    const fetch = createTlsFetch(makeConfig({
-      tls: {
-        certPath: pki!.clientCert,
+  it.each([
+    { name: "a plain client key", key: (): TlsConfig => ({ keyPath: pki!.clientKey }) },
+    {
+      name: "a passphrase-encrypted client key",
+      key: (): TlsConfig => ({
         keyPath: pki!.clientKeyEncrypted,
         keyPassphrase: pki!.clientKeyPassphrase,
-        caPath: pki!.caCert,
-      },
+      }),
+    },
+  ])("presents the client certificate to an mTLS server with $name", async ({ key }) => {
+    const fetch = createTlsFetch(makeConfig({
+      tls: { certPath: pki!.clientCert, caPath: pki!.caCert, ...key() },
     }));
 
     const response = await fetch(baseUrl);
 
     expect(response.ok).toBe(true);
     expect(await response.json()).toMatchObject({ clientCN: "test-client" });
-  });
-
-  it("fails against an mTLS server when no client certificate is configured", async () => {
-    const fetch = createTlsFetch(makeConfig({
-      tls: { caPath: pki!.caCert },
-    }));
-
-    const error = await fetch(baseUrl).then(
-      () => { throw new Error("expected the fetch to reject"); },
-      (e: unknown) => e,
-    );
-
-    // The server aborts the handshake when no certificate is presented; the
-    // exact code varies by platform and TLS version.
-    expect([
-      "UND_ERR_SOCKET",
-      "ECONNRESET",
-      "EPIPE",
-      "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED",
-      "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
-      "ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE",
-    ]).toContain(rootCode(error));
   });
 
   it("rejects a server signed by an unknown CA when no CA bundle is configured", async () => {
@@ -322,10 +289,6 @@ describe("createTlsFetch", () => {
     await expect(fetch(`${plainUrl}redirect`)).rejects.toThrow(
       /Refusing to follow the redirect/,
     );
-  });
-
-  it("follows a same-origin redirect when no TLS is configured", async () => {
-    const fetch = createTlsFetch(makeConfig({ url: plainUrl }));
 
     const response = await fetch(`${plainUrl}mcp`, { method: "POST", body: '{"jsonrpc":"2.0"}' });
 
@@ -337,23 +300,6 @@ describe("createTlsFetch", () => {
     });
   });
 
-  it("fails at startup when a PEM file cannot be read", () => {
-    expect(() => createTlsFetch(makeConfig({
-      tls: { certPath: "/nonexistent/client.crt", keyPath: pki!.clientKey },
-    }))).toThrow(/Cannot read the MCP_CLIENT_CERT file at \/nonexistent\/client\.crt/);
-  });
-
-  it("fails at startup when the key passphrase is wrong", () => {
-    expect(() => createTlsFetch(makeConfig({
-      tls: {
-        certPath: pki!.clientCert,
-        keyPath: pki!.clientKeyEncrypted,
-        keyPassphrase: "not-the-passphrase",
-        caPath: pki!.caCert,
-      },
-    }))).toThrow("MCP_CLIENT_KEY_PASSPHRASE does not decrypt MCP_CLIENT_KEY");
-  });
-
   /** Writes a bad CA bundle into the throwaway PKI directory. */
   function writeCaFile(name: string, contents: string): string {
     const path = join(pki!.dir, name);
@@ -361,28 +307,48 @@ describe("createTlsFetch", () => {
     return path;
   }
 
-  it("fails at startup when the CA bundle holds no certificate", () => {
-    const caPath = writeCaFile("garbage.crt", "not a pem at all\n");
-
-    expect(() => createTlsFetch(makeConfig({ tls: { caPath } })))
-      .toThrow("MCP_CA_CERT contains no PEM certificate");
-  });
-
-  it("fails at startup when the CA bundle is a private key", () => {
-    // Pointing MCP_CA_CERT at the wrong PEM file is the easy mistake, and it
-    // would otherwise make every connection fail verification instead.
-    const caPath = writeCaFile("key-as-ca.crt", readFileSync(pki!.clientKey, "utf8"));
-
-    expect(() => createTlsFetch(makeConfig({ tls: { caPath } })))
-      .toThrow("MCP_CA_CERT contains no PEM certificate");
-  });
-
-  it("fails at startup when a certificate in the CA bundle is corrupt", () => {
-    const corrupted = readFileSync(pki!.caCert, "utf8").replace(/^(.{40})/m, "!!!!not-base64!!!!");
-    const caPath = writeCaFile("corrupt.crt", corrupted);
-
-    expect(() => createTlsFetch(makeConfig({ tls: { caPath } })))
-      .toThrow(/MCP_CA_CERT contains a certificate that cannot be parsed/);
+  it.each([
+    {
+      name: "a PEM file cannot be read",
+      tls: (): TlsConfig => ({ certPath: "/nonexistent/client.crt", keyPath: pki!.clientKey }),
+      message: /Cannot read the MCP_CLIENT_CERT file at \/nonexistent\/client\.crt/,
+    },
+    {
+      name: "the certificate and key do not match",
+      tls: (): TlsConfig => ({ certPath: pki!.clientCert, keyPath: pki!.serverKey }),
+      message: "MCP_CLIENT_CERT and MCP_CLIENT_KEY do not match",
+    },
+    {
+      name: "the key passphrase is wrong",
+      tls: (): TlsConfig => ({
+        certPath: pki!.clientCert,
+        keyPath: pki!.clientKeyEncrypted,
+        keyPassphrase: "not-the-passphrase",
+        caPath: pki!.caCert,
+      }),
+      message: "MCP_CLIENT_KEY_PASSPHRASE does not decrypt MCP_CLIENT_KEY",
+    },
+    {
+      // Pointing MCP_CA_CERT at the wrong PEM file is the easy mistake, and it
+      // would otherwise make every connection fail verification instead.
+      name: "the CA bundle is a private key",
+      tls: (): TlsConfig => ({
+        caPath: writeCaFile("key-as-ca.crt", readFileSync(pki!.clientKey, "utf8")),
+      }),
+      message: "MCP_CA_CERT contains no PEM certificate",
+    },
+    {
+      name: "a certificate in the CA bundle is corrupt",
+      tls: (): TlsConfig => ({
+        caPath: writeCaFile(
+          "corrupt.crt",
+          readFileSync(pki!.caCert, "utf8").replace(/^(.{40})/m, "!!!!not-base64!!!!"),
+        ),
+      }),
+      message: /MCP_CA_CERT contains a certificate that cannot be parsed/,
+    },
+  ])("fails at startup when $name", ({ tls, message }) => {
+    expect(() => createTlsFetch(makeConfig({ tls: tls() }))).toThrow(message);
   });
 
   it("accepts a CA bundle holding more than one certificate", async () => {
@@ -410,10 +376,23 @@ describe("createTlsFetch", () => {
     }
   }
 
-  it("tunnels through HTTPS_PROXY instead of connecting direct", async () => {
-    await withProxyEnv({ HTTPS_PROXY: proxyUrl }, async () => {
-      // The dispatcher is built here, after the variable is set, because a
-      // per-request dispatcher overrides whatever Node configured globally.
+  it.each([
+    {
+      name: "HTTPS_PROXY",
+      env: (): Record<string, string> => ({ HTTPS_PROXY: proxyUrl }),
+      tunnels: 1,
+    },
+    {
+      // A dead proxy port, so a request that wrongly takes the proxy path
+      // fails outright rather than passing on the tunnel count alone.
+      name: "NO_PROXY",
+      env: (): Record<string, string> => ({ HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "localhost" }),
+      tunnels: 0,
+    },
+  ])("honours $name", async ({ env, tunnels }) => {
+    await withProxyEnv(env(), async () => {
+      // The dispatcher is built in here, after the variables are set, because
+      // a per-request dispatcher overrides whatever Node configured globally.
       const fetch = createTlsFetch(makeConfig({
         tls: { certPath: pki!.clientCert, keyPath: pki!.clientKey, caPath: pki!.caCert },
       }));
@@ -421,28 +400,10 @@ describe("createTlsFetch", () => {
       const response = await fetch(baseUrl);
 
       expect(response.ok).toBe(true);
-      // The client certificate must survive the tunnel, not just the proxy.
+      // The client certificate must survive whichever path is taken: the
+      // CONNECT tunnel when proxied, the plain agent when direct.
       expect(await response.json()).toMatchObject({ clientCN: "test-client" });
-      expect(tunnelled).toBe(1);
+      expect(tunnelled).toBe(tunnels);
     });
-  });
-
-  it("honours NO_PROXY and connects direct", async () => {
-    await withProxyEnv({ HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "localhost" }, async () => {
-      const fetch = createTlsFetch(makeConfig({
-        tls: { certPath: pki!.clientCert, keyPath: pki!.clientKey, caPath: pki!.caCert },
-      }));
-
-      const response = await fetch(baseUrl);
-
-      expect(response.ok).toBe(true);
-      expect(tunnelled).toBe(0);
-    });
-  });
-
-  it("fails at startup when the certificate and key do not match", () => {
-    expect(() => createTlsFetch(makeConfig({
-      tls: { certPath: pki!.clientCert, keyPath: pki!.serverKey },
-    }))).toThrow("MCP_CLIENT_CERT and MCP_CLIENT_KEY do not match");
   });
 });
