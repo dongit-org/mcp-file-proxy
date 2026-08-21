@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, type Server } from "node:https";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import { connect as netConnect } from "node:net";
+import type { Duplex } from "node:stream";
 import { readFileSync, writeFileSync } from "node:fs";
 import { TLSSocket } from "node:tls";
 import { createTlsFetch } from "../src/tls.js";
@@ -13,6 +15,11 @@ let server: Server | undefined;
 let plainServer: HttpServer | undefined;
 let baseUrl: string;
 let plainUrl: string;
+let proxyServer: HttpServer | undefined;
+let proxyUrl: string;
+let tunnelled = 0;
+const tunnelSockets: Duplex[] = [];
+const savedProxyEnv: Record<string, string | undefined> = {};
 let savedRejectUnauthorized: string | undefined;
 
 function makeConfig(overrides: Partial<ProxyConfig>): ProxyConfig {
@@ -47,6 +54,11 @@ beforeAll(async () => {
   // developer's shell environment.
   savedRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+
+  for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]) {
+    savedProxyEnv[name] = process.env[name];
+    delete process.env[name];
+  }
 
   pki = generateTestPki();
 
@@ -119,6 +131,27 @@ beforeAll(async () => {
 
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   plainUrl = `http://127.0.0.1:${listeningPort(httpServer)}/`;
+
+  // A CONNECT proxy, to prove requests are tunnelled rather than sent direct.
+  const tunnelServer = createHttpServer((_req, res) => { res.writeHead(405); res.end(); });
+  tunnelServer.on("connect", (req, clientSocket, head) => {
+    tunnelled += 1;
+    tunnelSockets.push(clientSocket);
+    const [, port] = (req.url ?? "").split(":");
+    const upstream = netConnect(Number(port), "127.0.0.1", () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      upstream.write(head);
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+    tunnelSockets.push(upstream);
+    upstream.on("error", () => clientSocket.destroy());
+    clientSocket.on("error", () => upstream.destroy());
+  });
+  proxyServer = tunnelServer;
+
+  await new Promise<void>((resolve) => tunnelServer.listen(0, "127.0.0.1", resolve));
+  proxyUrl = `http://127.0.0.1:${listeningPort(tunnelServer)}`;
 });
 
 afterAll(async () => {
@@ -136,8 +169,24 @@ afterAll(async () => {
       runningPlainServer.close((err) => (err ? reject(err) : resolve())),
     );
   }
+  for (const socket of tunnelSockets) {
+    socket.destroy();
+  }
+  const runningProxy = proxyServer;
+  if (runningProxy) {
+    runningProxy.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      runningProxy.close((err) => (err ? reject(err) : resolve())),
+    );
+  }
   if (pki) {
     removeTestPki(pki);
+  }
+
+  for (const [name, value] of Object.entries(savedProxyEnv)) {
+    if (value !== undefined) {
+      process.env[name] = value;
+    }
   }
 
   if (savedRejectUnauthorized !== undefined) {
@@ -346,6 +395,49 @@ describe("createTlsFetch", () => {
     const response = await fetch(baseUrl);
 
     expect(response.ok).toBe(true);
+  });
+
+  /** Runs `body` with HTTPS_PROXY (and optionally NO_PROXY) set. */
+  async function withProxyEnv(env: Record<string, string>, body: () => Promise<void>): Promise<void> {
+    Object.assign(process.env, env);
+    tunnelled = 0;
+    try {
+      await body();
+    } finally {
+      for (const name of Object.keys(env)) {
+        delete process.env[name];
+      }
+    }
+  }
+
+  it("tunnels through HTTPS_PROXY instead of connecting direct", async () => {
+    await withProxyEnv({ HTTPS_PROXY: proxyUrl }, async () => {
+      // The dispatcher is built here, after the variable is set, because a
+      // per-request dispatcher overrides whatever Node configured globally.
+      const fetch = createTlsFetch(makeConfig({
+        tls: { certPath: pki!.clientCert, keyPath: pki!.clientKey, caPath: pki!.caCert },
+      }));
+
+      const response = await fetch(baseUrl);
+
+      expect(response.ok).toBe(true);
+      // The client certificate must survive the tunnel, not just the proxy.
+      expect(await response.json()).toMatchObject({ clientCN: "test-client" });
+      expect(tunnelled).toBe(1);
+    });
+  });
+
+  it("honours NO_PROXY and connects direct", async () => {
+    await withProxyEnv({ HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "localhost" }, async () => {
+      const fetch = createTlsFetch(makeConfig({
+        tls: { certPath: pki!.clientCert, keyPath: pki!.clientKey, caPath: pki!.caCert },
+      }));
+
+      const response = await fetch(baseUrl);
+
+      expect(response.ok).toBe(true);
+      expect(tunnelled).toBe(0);
+    });
   });
 
   it("fails at startup when the certificate and key do not match", () => {

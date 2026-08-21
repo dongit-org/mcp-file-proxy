@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createSecureContext, type ConnectionOptions } from "node:tls";
 import { X509Certificate } from "node:crypto";
-import { Agent } from "undici";
+import { EnvHttpProxyAgent } from "undici";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { ProxyConfig } from "./config.js";
 
@@ -71,7 +71,7 @@ const MAX_REDIRECTS = 5;
  * Builds the undici agent carrying the configured TLS material, reading and
  * validating the PEM files eagerly so misconfiguration fails at startup.
  */
-function createTlsDispatcher(config: ProxyConfig): Agent | undefined {
+function createTlsDispatcher(config: ProxyConfig): EnvHttpProxyAgent | undefined {
   const tls = config.tls;
   if (!tls) {
     return undefined;
@@ -100,7 +100,7 @@ function createTlsDispatcher(config: ProxyConfig): Agent | undefined {
     connect.rejectUnauthorized = false;
   }
 
-  return new Agent({ connect });
+  return new EnvHttpProxyAgent({ connect, requestTls: connect });
 }
 
 /**
@@ -126,7 +126,7 @@ export function createTlsFetch(config: ProxyConfig): FetchLike {
       // dispatcher from the npm undici package. `dispatcher` is an undici
       // extension that RequestInit does not declare, so the init is widened
       // rather than asserted.
-      const requestInit: RequestInit & { dispatcher?: Agent } = {
+      const requestInit: RequestInit & { dispatcher?: EnvHttpProxyAgent } = {
         ...init,
         redirect: "manual",
       };
