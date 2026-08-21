@@ -300,8 +300,8 @@ describe("createTlsFetch", () => {
     });
   });
 
-  /** Writes a bad CA bundle into the throwaway PKI directory. */
-  function writeCaFile(name: string, contents: string): string {
+  /** Writes a PEM file into the throwaway PKI directory. */
+  function writePemFile(name: string, contents: string): string {
     const path = join(pki!.dir, name);
     writeFileSync(path, contents);
     return path;
@@ -333,19 +333,35 @@ describe("createTlsFetch", () => {
       // would otherwise make every connection fail verification instead.
       name: "the CA bundle is a private key",
       tls: (): TlsConfig => ({
-        caPath: writeCaFile("key-as-ca.crt", readFileSync(pki!.clientKey, "utf8")),
+        caPath: writePemFile("key-as-ca.crt", readFileSync(pki!.clientKey, "utf8")),
       }),
       message: "MCP_CA_CERT contains no PEM certificate",
     },
     {
       name: "a certificate in the CA bundle is corrupt",
       tls: (): TlsConfig => ({
-        caPath: writeCaFile(
+        caPath: writePemFile(
           "corrupt.crt",
           readFileSync(pki!.caCert, "utf8").replace(/^(.{40})/m, "!!!!not-base64!!!!"),
         ),
       }),
       message: /MCP_CA_CERT contains a certificate that cannot be parsed/,
+    },
+    {
+      name: "the client certificate file is empty",
+      tls: (): TlsConfig => ({
+        certPath: writePemFile("empty-cert.pem", ""),
+        keyPath: pki!.clientKey,
+      }),
+      message: /MCP_CLIENT_CERT/,
+    },
+    {
+      name: "the client key file is empty",
+      tls: (): TlsConfig => ({
+        certPath: pki!.clientCert,
+        keyPath: writePemFile("empty-key.pem", ""),
+      }),
+      message: /MCP_CLIENT_KEY/,
     },
   ])("fails at startup when $name", ({ tls, message }) => {
     expect(() => createTlsFetch(makeConfig({ tls: tls() }))).toThrow(message);
@@ -353,7 +369,7 @@ describe("createTlsFetch", () => {
 
   it("accepts a CA bundle holding more than one certificate", async () => {
     const bundle = readFileSync(pki!.caCert, "utf8");
-    const caPath = writeCaFile("bundle.crt", `${bundle}${bundle}`);
+    const caPath = writePemFile("bundle.crt", `${bundle}${bundle}`);
 
     const fetch = createTlsFetch(makeConfig({
       tls: { certPath: pki!.clientCert, keyPath: pki!.clientKey, caPath },

@@ -6,12 +6,20 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { ProxyConfig } from "./config.js";
 
 function readPemFile(path: string, variableName: string): string {
+  let contents: string;
+
   try {
-    return readFileSync(path, "utf8");
+    contents = readFileSync(path, "utf8");
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot read the ${variableName} file at ${path}: ${detail}`);
   }
+
+  if (contents.trim() === "") {
+    throw new Error(`The ${variableName} file at ${path} is empty`);
+  }
+
+  return contents;
 }
 
 
