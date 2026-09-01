@@ -39,6 +39,15 @@ describe("loadConfig", () => {
     ).toThrow("MCP_HEADERS must be a JSON object");
   });
 
+  it("throws when an MCP_HEADERS value is not a string", () => {
+    expect(() =>
+      loadConfig({
+        MCP_URL: "https://example.com/mcp",
+        MCP_HEADERS: JSON.stringify({ "X-Count": 5 }),
+      }),
+    ).toThrow("MCP_HEADERS value for X-Count must be a string");
+  });
+
   it("sets acceptInsecureCerts when --accept-insecure-certs flag is present", () => {
     const config = loadConfig(validEnv, ["node", "index.js", "--accept-insecure-certs"]);
 
@@ -49,5 +58,57 @@ describe("loadConfig", () => {
     const config = loadConfig(validEnv, ["node", "index.js"]);
 
     expect(config.acceptInsecureCerts).toBe(false);
+  });
+
+  it("leaves tls undefined when no TLS variables are set", () => {
+    const config = loadConfig(validEnv);
+
+    expect(config.tls).toBeUndefined();
+  });
+
+  it("collects the TLS variables into the tls config", () => {
+    const config = loadConfig({
+      ...validEnv,
+      MCP_CLIENT_CERT: "/certs/client.crt",
+      MCP_CLIENT_KEY: "/certs/client.key",
+      MCP_CLIENT_KEY_PASSPHRASE: "secret",
+      MCP_CA_CERT: "/certs/ca.crt",
+    });
+
+    expect(config.tls).toEqual({
+      certPath: "/certs/client.crt",
+      keyPath: "/certs/client.key",
+      keyPassphrase: "secret",
+      caPath: "/certs/ca.crt",
+    });
+  });
+
+  it("accepts a CA bundle without a client certificate", () => {
+    const config = loadConfig({ ...validEnv, MCP_CA_CERT: "/certs/ca.crt" });
+
+    expect(config.tls).toEqual({
+      certPath: undefined,
+      keyPath: undefined,
+      keyPassphrase: undefined,
+      caPath: "/certs/ca.crt",
+    });
+  });
+
+  it("throws when MCP_CLIENT_CERT is set without MCP_CLIENT_KEY", () => {
+    expect(() =>
+      loadConfig({ ...validEnv, MCP_CLIENT_CERT: "/certs/client.crt" }),
+    ).toThrow("MCP_CLIENT_CERT and MCP_CLIENT_KEY must be set together");
+  });
+
+  it("throws when MCP_CLIENT_KEY is set without MCP_CLIENT_CERT", () => {
+    expect(() =>
+      loadConfig({ ...validEnv, MCP_CLIENT_KEY: "/certs/client.key" }),
+    ).toThrow("MCP_CLIENT_CERT and MCP_CLIENT_KEY must be set together");
+  });
+
+  it("throws when a passphrase is set without a key", () => {
+    expect(() =>
+      loadConfig({ ...validEnv, MCP_CLIENT_KEY_PASSPHRASE: "secret" }),
+    ).toThrow("MCP_CLIENT_KEY_PASSPHRASE requires MCP_CLIENT_KEY");
   });
 });

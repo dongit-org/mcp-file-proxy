@@ -42,6 +42,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(`Fatal: ${error instanceof Error ? error.message : error}`);
+  // Logging the error itself keeps the cause chain, which carries the
+  // underlying message and code that the top-level message does not.
+  console.error("Fatal:", error);
   process.exit(1);
 });

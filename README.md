@@ -63,13 +63,52 @@ Add to your MCP client config:
 
 ### Environment variables
 
-| Variable      | Required | Description                                  |
-|---------------|----------|----------------------------------------------|
-| `MCP_URL`     | Yes      | URL of the remote MCP server                 |
-| `MCP_HEADERS` | No       | JSON object of headers to send with requests |
+| Variable                    | Required | Description                                                                 |
+|-----------------------------|----------|-----------------------------------------------------------------------------|
+| `MCP_URL`                   | Yes      | URL of the remote MCP server                                                |
+| `MCP_HEADERS`               | No       | JSON object of headers to send with requests                                |
+| `MCP_CLIENT_CERT`           | No       | Path to a PEM client certificate for mutual TLS (requires `MCP_CLIENT_KEY`) |
+| `MCP_CLIENT_KEY`            | No       | Path to the PEM private key for the client certificate                      |
+| `MCP_CLIENT_KEY_PASSPHRASE` | No       | Passphrase for the client key, if the key file is encrypted                 |
+| `MCP_CA_CERT`               | No       | Path to a PEM CA bundle used to verify the server certificate               |
 
 ### Flags
 
 | Flag                      | Description                                                         |
 |---------------------------|---------------------------------------------------------------------|
 | `--accept-insecure-certs` | Disable TLS certificate verification (for self-signed certs in dev) |
+
+### Mutual TLS (client certificates)
+
+If the remote server requires mutual TLS, point `MCP_CLIENT_CERT` and `MCP_CLIENT_KEY` at your PEM-encoded
+certificate and private key. When the server's certificate is signed by a private CA, also set `MCP_CA_CERT`
+so the proxy can verify it without disabling certificate checks:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["@dongit/mcp-file-proxy"],
+      "env": {
+        "MCP_URL": "https://example.com/mcp",
+        "MCP_HEADERS": "{\"Authorization\": \"Bearer your-token\"}",
+        "MCP_CLIENT_CERT": "/path/to/client.crt",
+        "MCP_CLIENT_KEY": "/path/to/client.key",
+        "MCP_CA_CERT": "/path/to/ca.crt"
+      }
+    }
+  }
+}
+```
+
+> **Note:** setting `MCP_CA_CERT` *replaces* Node's default trust store rather than extending it — the proxy
+> will then only trust servers whose chain leads to a CA in that bundle. If you need both a private CA and the
+> public CAs, concatenate them into one bundle file.
+
+Only PEM files are supported. If your credentials came as a PKCS#12 bundle (`.p12`/`.pfx`), convert it first:
+
+```sh
+openssl pkcs12 -in client.p12 -clcerts -nokeys -out client.crt
+openssl pkcs12 -in client.p12 -nocerts -nodes -out client.key
+```

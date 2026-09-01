@@ -49,6 +49,10 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: vi.fn(),
 }));
 
+vi.mock("../src/tls.js", () => ({
+  createTlsFetch: vi.fn().mockReturnValue(undefined),
+}));
+
 import { createProxyServer } from "../src/proxy.js";
 import type { ProxyConfig } from "../src/config.js";
 
@@ -92,25 +96,38 @@ describe("createProxyServer", () => {
     expect(mockConnect).toHaveBeenCalled();
   });
 
-  it("throws a descriptive error for TLS certificate failures", async () => {
-    const tlsError = new TypeError("fetch failed", {
-      cause: new Error("self-signed certificate", {
-        cause: Object.assign(new Error("self signed certificate"), { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }),
-      }),
-    });
-    mockConnect.mockRejectedValueOnce(tlsError);
+  async function connectionError(rejection: unknown, config = testConfig): Promise<Error> {
+    mockConnect.mockRejectedValueOnce(rejection);
 
-    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
-      /TLS certificate error.*DEPTH_ZERO_SELF_SIGNED_CERT.*--accept-insecure-certs/,
+    return await createProxyServer(config, testPkg).then(
+      () => { throw new Error("expected connection to fail"); },
+      (e: Error) => e,
     );
+  }
+
+  it("names the URL it failed to reach", async () => {
+    const error = await connectionError(new TypeError("fetch failed", {
+      cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+    }));
+
+    expect(error.message).toBe("Failed to connect to https://example.com/mcp");
   });
 
-  it("throws a descriptive error for generic connection failures", async () => {
-    mockConnect.mockRejectedValueOnce(new Error("Connection refused"));
+  it("keeps the original error as the cause, so the chain and its codes survive", async () => {
+    const root = Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" });
+    const original = new TypeError("fetch failed", { cause: root });
 
-    await expect(createProxyServer(testConfig, testPkg)).rejects.toThrow(
-      /Failed to connect to.*Connection refused/,
-    );
+    const error = await connectionError(original);
+
+    expect(error.cause).toBe(original);
+    expect(original.cause).toBe(root);
+  });
+
+  it("wraps a rejection that is not an Error without losing it", async () => {
+    const error = await connectionError("something went wrong");
+
+    expect(error.message).toBe("Failed to connect to https://example.com/mcp");
+    expect(error.cause).toBe("something went wrong");
   });
 
   describe("tools/list forwarding", () => {
