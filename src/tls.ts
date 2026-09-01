@@ -68,37 +68,37 @@ function validateTlsMaterial(options: ConnectionOptions): void {
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_REDIRECTS = 5;
 
-function createTlsDispatcher(config: ProxyConfig): EnvHttpProxyAgent | undefined {
-  const tls = config.tls;
-  if (!tls) {
-    return undefined;
-  }
-
+function createTlsDispatcher(config: ProxyConfig): EnvHttpProxyAgent {
   const connect: ConnectionOptions = {};
+  const tls = config.tls;
 
-  if (tls.certPath) {
-    connect.cert = readPemFile(tls.certPath, "MCP_CLIENT_CERT");
-  }
-  if (tls.keyPath) {
-    connect.key = readPemFile(tls.keyPath, "MCP_CLIENT_KEY");
-  }
-  if (tls.keyPassphrase) {
-    connect.passphrase = tls.keyPassphrase;
-  }
-  if (tls.caPath) {
-    const ca = readPemFile(tls.caPath, "MCP_CA_CERT");
-    validateCaBundle(ca);
-    connect.ca = ca;
-  }
+  if (tls) {
+    if (tls.certPath) {
+      connect.cert = readPemFile(tls.certPath, "MCP_CLIENT_CERT");
+    }
+    if (tls.keyPath) {
+      connect.key = readPemFile(tls.keyPath, "MCP_CLIENT_KEY");
+    }
+    if (tls.keyPassphrase) {
+      connect.passphrase = tls.keyPassphrase;
+    }
+    if (tls.caPath) {
+      const ca = readPemFile(tls.caPath, "MCP_CA_CERT");
+      validateCaBundle(ca);
+      connect.ca = ca;
+    }
 
-  validateTlsMaterial(connect);
+    validateTlsMaterial(connect);
+  }
 
   if (config.acceptInsecureCerts) {
     connect.rejectUnauthorized = false;
   }
 
   // An EnvHttpProxyAgent rather than a plain Agent because Node's fetch
-  // ignores HTTP_PROXY, HTTPS_PROXY and NO_PROXY.
+  // ignores HTTP_PROXY, HTTPS_PROXY and NO_PROXY. It is built even when no
+  // TLS is configured so that proxy handling does not depend on whether a
+  // client certificate or CA bundle happens to be set.
   return new EnvHttpProxyAgent({ connect, requestTls: connect });
 }
 
@@ -110,13 +110,11 @@ export function createTlsFetch(config: ProxyConfig): FetchLike {
     let target = new URL(url);
 
     for (let followed = 0; ; followed++) {
-      const requestInit: RequestInit & { dispatcher?: EnvHttpProxyAgent } = {
+      const requestInit: RequestInit & { dispatcher: EnvHttpProxyAgent } = {
         ...init,
         redirect: "manual",
+        dispatcher,
       };
-      if (dispatcher) {
-        requestInit.dispatcher = dispatcher;
-      }
 
       const response = await fetch(target, requestInit);
 

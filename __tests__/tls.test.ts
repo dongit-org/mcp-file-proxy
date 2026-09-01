@@ -422,4 +422,58 @@ describe("createTlsFetch", () => {
       expect(tunnelled).toBe(tunnels);
     });
   });
+
+  it.each([
+    {
+      name: "HTTP_PROXY when no TLS is configured",
+      env: (): Record<string, string> => ({ HTTP_PROXY: proxyUrl }),
+      tunnels: 1,
+    },
+    {
+      name: "NO_PROXY when no TLS is configured",
+      env: (): Record<string, string> => ({
+        HTTP_PROXY: "http://127.0.0.1:1",
+        NO_PROXY: "127.0.0.1",
+      }),
+      tunnels: 0,
+    },
+  ])("honours $name", async ({ env, tunnels }) => {
+    await withProxyEnv(env(), async () => {
+      const fetch = createTlsFetch(makeConfig({ url: plainUrl }));
+
+      const response = await fetch(plainUrl);
+
+      expect(response.ok).toBe(true);
+      // Proves the request arrived, rather than only that it did or did not
+      // take the tunnel.
+      expect(await response.json()).toMatchObject({ method: "GET", path: "/" });
+      expect(tunnelled).toBe(tunnels);
+    });
+  });
+
+  it("skips server certificate verification with acceptInsecureCerts and no client certificate", async () => {
+    const openServer = createServer(
+      { key: readFileSync(pki!.serverKey), cert: readFileSync(pki!.serverCert) },
+      (req, res) => {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ path: req.url }));
+      },
+    );
+    await new Promise<void>((resolve) => openServer.listen(0, "127.0.0.1", resolve));
+    const url = `https://localhost:${listeningPort(openServer)}/`;
+
+    try {
+      const fetch = createTlsFetch(makeConfig({ url, acceptInsecureCerts: true }));
+
+      const response = await fetch(url);
+
+      expect(response.ok).toBe(true);
+      expect(await response.json()).toMatchObject({ path: "/" });
+    } finally {
+      openServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        openServer.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
 });
