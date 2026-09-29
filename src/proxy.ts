@@ -59,6 +59,7 @@ export async function createProxyServer(config: ProxyConfig, pkg: PackageInfo): 
         resources: {},
         prompts: {},
       },
+      instructions: remoteClient.getInstructions(),
     },
   );
 
