@@ -4,6 +4,7 @@ import { clearSchemaCache } from "../src/file-interceptor.js";
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockClient = {
   connect: mockConnect,
+  getInstructions: vi.fn().mockReturnValue(undefined),
   listTools: vi.fn().mockResolvedValue({
     tools: [
       {
@@ -128,6 +129,29 @@ describe("createProxyServer", () => {
 
     expect(error.message).toBe("Failed to connect to https://example.com/mcp");
     expect(error.cause).toBe("something went wrong");
+  });
+
+  describe("instructions forwarding", () => {
+    const initializeParams = {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "client", version: "0.0.0" },
+    };
+
+    it("advertises the remote server's instructions", async () => {
+      mockClient.getInstructions.mockReturnValueOnce("Read the docs:// resources first.");
+      const { server } = await createProxyServer(testConfig, testPkg);
+      const result = await invokeHandler(server, "initialize", initializeParams);
+
+      expect(result).toMatchObject({ instructions: "Read the docs:// resources first." });
+    });
+
+    it("omits instructions when the remote server has none", async () => {
+      const { server } = await createProxyServer(testConfig, testPkg);
+      const result = await invokeHandler(server, "initialize", initializeParams);
+
+      expect(result).not.toHaveProperty("instructions");
+    });
   });
 
   describe("tools/list forwarding", () => {
